@@ -371,6 +371,12 @@ pub enum DistributionMode {
         log_mean: f64,
         log_std: f64,
     },
+
+    /// Gamma distribution
+    Gamma {
+        shape: f64,
+        scale: f64,
+    }
 }
 
 impl Default for DistributionMode {
@@ -586,6 +592,10 @@ fn sample_num_tokens(num_tokens: u64, min_tokens: u64, max_tokens: u64, distribu
         DistributionMode::LogNormal { log_mean, log_std } => {
             let log_normal = rand_distr::LogNormal::new(log_mean, log_std).unwrap();
             log_normal.sample(&mut rand::rng()) as u64
+        }
+        DistributionMode::Gamma { shape, scale } => {
+            let gamma = rand_distr::Gamma::new(shape, scale).unwrap();
+            gamma.sample(&mut rand::rng()) as u64
         }
     };
     if num_tokens < min_tokens {
@@ -1425,7 +1435,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lognormal_auto_distribution() {
+    fn test_lognormal_distribution() {
         let samples: Vec<f64> = (0..10_000)
             .map(|_| sample_num_tokens(2500, 1, 131_000, DistributionMode::LogNormal {log_mean: 6.62, log_std: 1.4}) as f64)
             .collect();
@@ -1455,5 +1465,39 @@ mod tests {
         assert!((p50 - 753.0).abs() / 753.0 < 0.3, "p50 too far off: {}", p50);
         assert!((p75 - 1719.0).abs() / 1719.0 < 0.3, "p75 too far off: {}", p75);
         assert!((avg - 2500.0).abs() / 2500.0 < 0.3, "avg too far off: {}", avg);
+    }
+
+
+    #[test]
+    fn test_gamma_distribution() {
+        let samples: Vec<f64> = (0..10_000)
+            .map(|_| sample_num_tokens(170, 1, 131_000, DistributionMode::Gamma {shape: 0.7, scale: 242.857}) as f64)
+            .collect();
+
+        let mut data = Data::new(samples.clone());
+
+        let min = data.min();
+        let max = data.max();
+        let p25 = data.percentile(25);
+        let p50 = data.percentile(50);
+        let p75 = data.percentile(75);
+
+        fn mean(list: &[f64]) -> f64 {
+            let sum: f64 = Iterator::sum(list.iter());
+            f64::from(sum) / (list.len() as f64)
+        }
+        let avg = mean(samples.as_slice());
+
+        // println!("{p25}");
+        // println!("{p50}");
+        // println!("{p75}");
+        // println!("{avg}");
+
+        assert!(min as u64 >= 1);
+        assert!(max as u64 <= 131_000);
+        assert!((p25 - 32.0).abs() / 32.0 < 0.3, "p25 too far off: {}", p25);
+        assert!((p50 - 86.0).abs() / 86.0 < 0.3, "p50 too far off: {}", p50);
+        assert!((p75 - 209.0).abs() / 209.0 < 0.3, "p75 too far off: {}", p75);
+        assert!((avg - 170.0).abs() / 170.0 < 0.3, "avg too far off: {}", avg);
     }
 }

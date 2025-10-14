@@ -67,6 +67,7 @@ struct Args {
     /// The `dist` value defines how token counts are sampled:
     /// - Normal distribution: `dist=normal:variance=5`
     /// - Log-normal distribution: `dist=log_normal:log_mean=6.2,log_std=1.3`
+    /// - Gamma distribution: `dist=gamma:shape=0.7,scale=242`
     ///
     /// Examples:
     /// ```
@@ -171,6 +172,8 @@ fn parse_tokenizer_options(s: &str) -> Result<TokenizeOptions, Error> {
                 if next.starts_with("variance=")
                     || next.starts_with("log_mean=")
                     || next.starts_with("log_std=")
+                    || next.starts_with("shape=")
+                    || next.starts_with("scale=")
                 {
                     dist_str.push(',');
                     dist_str.push_str(next);
@@ -254,6 +257,34 @@ fn parse_distribution_mode(spec: &str) -> Result<DistributionMode, Error> {
             Ok(DistributionMode::LogNormal {
                 log_mean: log_mean.ok_or_else(|| Error::new(InvalidValue))?,
                 log_std: log_std.ok_or_else(|| Error::new(InvalidValue))?,
+            })
+        }
+        "gamma" => {
+            if parts.len() == 1 {
+                return Err(Error::new(InvalidValue)); // needs params
+            }
+            let mut shape = None;
+            let mut scale = None;
+
+            for kv in parts[1].split(',') {
+                let pair: Vec<&str> = kv.split('=').collect();
+                if pair.len() != 2 {
+                    return Err(Error::new(InvalidValue));
+                }
+                match pair[0].trim() {
+                    "shape" => {
+                        shape = Some(pair[1].trim().parse::<f64>().map_err(|_| Error::new(InvalidValue))?);
+                    }
+                    "scale" => {
+                        scale = Some(pair[1].trim().parse::<f64>().map_err(|_| Error::new(InvalidValue))?);
+                    }
+                    _ => return Err(Error::new(InvalidValue)),
+                }
+            }
+
+            Ok(DistributionMode::Gamma {
+                shape: shape.ok_or_else(|| Error::new(InvalidValue))?,
+                scale: scale.ok_or_else(|| Error::new(InvalidValue))?,
             })
         }
         _ => Err(Error::new(InvalidValue)),
