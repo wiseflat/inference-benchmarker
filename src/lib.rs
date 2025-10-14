@@ -11,6 +11,7 @@ use crate::benchmark::{Event, MessageEvent};
 pub use crate::profiles::apply_profile;
 use crate::requests::OpenAITextGenerationBackend;
 pub use crate::requests::TokenizeOptions;
+pub use crate::requests::DistributionMode;
 use chrono::Local;
 use crossterm::ExecutableCommand;
 use log::{debug, error, info, warn, Level, LevelFilter};

@@ -1,4 +1,4 @@
-use crate::{RunConfiguration, TokenizeOptions};
+use crate::{RunConfiguration, TokenizeOptions, requests::DistributionMode};
 use std::string::ToString;
 
 pub fn apply_profile(
@@ -17,13 +17,13 @@ pub fn apply_profile(
                 num_tokens: Some(200),
                 min_tokens: 200,
                 max_tokens: 200,
-                variance: 0,
+                distribution_mode: DistributionMode::Normal { variance: 0 },
             }),
             decode_options: Some(TokenizeOptions {
                 num_tokens: Some(800),
                 min_tokens: 50,
                 max_tokens: 800,
-                variance: 100,
+                distribution_mode: DistributionMode::Normal { variance: 100 },
             }),
             dataset: "hlarcher/inference-benchmarker".to_string(),
             dataset_file: "share_gpt_0_turns.json".to_string(),
@@ -47,7 +47,7 @@ pub fn apply_profile(
                     num_tokens: Some(800), // decode up to 800 tokens
                     min_tokens: 50,
                     max_tokens: 800,
-                    variance: 100,
+                    distribution_mode: DistributionMode::Normal { variance: 100 },
                 }),
                 dataset: "hlarcher/inference-benchmarker".to_string(),
                 dataset_file: "share_gpt_turns.json".to_string(),
@@ -68,13 +68,13 @@ pub fn apply_profile(
                     num_tokens: Some(4096),
                     min_tokens: 3000,
                     max_tokens: 6000,
-                    variance: 1000,
+                    distribution_mode: DistributionMode::Normal { variance: 1000 },
                 }),
                 decode_options: Some(TokenizeOptions {
                     num_tokens: Some(50),
                     min_tokens: 30,
                     max_tokens: 80,
-                    variance: 10,
+                    distribution_mode: DistributionMode::Normal { variance: 10 },
                 }),
                 dataset: "hlarcher/inference-benchmarker".to_string(),
                 dataset_file: "github_code.json".to_string(),
@@ -97,13 +97,13 @@ pub fn apply_profile(
                     num_tokens: Some(10000),
                     min_tokens: 8000,
                     max_tokens: 12000,
-                    variance: 5000,
+                    distribution_mode: DistributionMode::Normal { variance: 5000 },
                 }),
                 decode_options: Some(TokenizeOptions {
                     num_tokens: Some(50),
                     min_tokens: 30,
                     max_tokens: 80,
-                    variance: 10,
+                    distribution_mode: DistributionMode::Normal { variance: 10 },
                 }),
                 dataset: "hlarcher/inference-benchmarker".to_string(),
                 dataset_file: "classification.json".to_string(),

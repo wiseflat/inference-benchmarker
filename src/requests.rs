@@ -325,7 +325,7 @@ pub struct TokenizeOptions {
     pub num_tokens: Option<u64>,
     pub min_tokens: u64,
     pub max_tokens: u64,
-    pub variance: u64,
+    pub distribution_mode: DistributionMode,
 }
 
 impl TokenizeOptions {
@@ -334,7 +334,7 @@ impl TokenizeOptions {
             num_tokens: None,
             min_tokens: 0,
             max_tokens: u64::MAX,
-            variance: 0,
+            distribution_mode: DistributionMode::default(),
         }
     }
 }
@@ -349,12 +349,33 @@ impl Display for TokenizeOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "num_tokens={num_tokens:?},min_tokens={min_tokens},max_tokens={max_tokens},variance={variance}",
+            "num_tokens={num_tokens:?},min_tokens={min_tokens},max_tokens={max_tokens},distribution_mode={distribution_mode:?}",
             num_tokens = self.num_tokens,
             min_tokens = self.min_tokens,
             max_tokens = self.max_tokens,
-            variance = self.variance
+            distribution_mode = self.distribution_mode
         )
+    }
+}
+
+#[derive(Clone, Serialize, Debug)]
+pub enum DistributionMode {
+    /// Normal (symmetric) distribution.
+    Normal {
+        //mean: f64, mean=num_tokens
+        variance: u64,
+    },
+
+    /// Log-normal (skewed, positive-only) distribution with direct params.
+    LogNormal {
+        log_mean: f64,
+        log_std: f64,
+    },
+}
+
+impl Default for DistributionMode {
+    fn default() -> Self {
+        Self::Normal { variance: 0 }
     }
 }
 
@@ -455,7 +476,7 @@ impl ConversationTextRequestGenerator {
                                     num_tokens,
                                     opts.min_tokens,
                                     opts.max_tokens,
-                                    opts.variance,
+                                    opts.distribution_mode,
                                 )
                             })
                         },
@@ -556,9 +577,17 @@ impl ConversationTextRequestGenerator {
     }
 }
 
-fn sample_num_tokens(num_tokens: u64, min_tokens: u64, max_tokens: u64, variance: u64) -> u64 {
-    let normal = rand_distr::Normal::new(num_tokens as f64, variance as f64).unwrap();
-    let mut num_tokens = normal.sample(&mut rand::rng()) as u64;
+fn sample_num_tokens(num_tokens: u64, min_tokens: u64, max_tokens: u64, distribution_mode: DistributionMode) -> u64 {
+    let mut num_tokens = match distribution_mode {
+        DistributionMode::Normal { variance } => {
+            let normal = rand_distr::Normal::new(num_tokens as f64, variance as f64).unwrap();
+            normal.sample(&mut rand::rng()) as u64
+        }
+        DistributionMode::LogNormal { log_mean, log_std } => {
+            let log_normal = rand_distr::LogNormal::new(log_mean, log_std).unwrap();
+            log_normal.sample(&mut rand::rng()) as u64
+        }
+    };
     if num_tokens < min_tokens {
         num_tokens = min_tokens;
     }
@@ -816,6 +845,10 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
     use tokio::sync::RwLock;
+    use statrs::statistics::Data;
+    use statrs::statistics::OrderStatistics;
+    use statrs::statistics::Min;
+    use statrs::statistics::Max;
 
     #[tokio::test]
     async fn test_openai_token_count() {
@@ -1181,7 +1214,9 @@ mod tests {
             num_tokens: None,
             min_tokens: 4,
             max_tokens: 1024,
-            variance: 0,
+            distribution_mode: DistributionMode::Normal {
+                variance: 0
+            }
         };
         let decode_tokenize_opts = TokenizeOptions::default();
         let hf_token = None;
@@ -1218,7 +1253,9 @@ mod tests {
             num_tokens: Some(200),
             min_tokens: 200,
             max_tokens: 200,
-            variance: 0,
+            distribution_mode: DistributionMode::Normal {
+                variance: 0
+            }
         };
         let decode_tokenize_opts = TokenizeOptions::default();
         let hf_token = None;
@@ -1245,7 +1282,9 @@ mod tests {
             num_tokens: None,
             min_tokens: 1,
             max_tokens: 200,
-            variance: 0,
+            distribution_mode: DistributionMode::Normal {
+                variance: 0
+            }
         };
         let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
@@ -1299,7 +1338,9 @@ mod tests {
             num_tokens: None,
             min_tokens: 1,
             max_tokens: 200,
-            variance: 0,
+            distribution_mode: DistributionMode::Normal {
+                variance: 0
+            }
         };
         let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
@@ -1333,7 +1374,9 @@ mod tests {
             num_tokens: None,
             min_tokens: 1,
             max_tokens: 200,
-            variance: 0,
+            distribution_mode: DistributionMode::Normal {
+                variance: 0
+            }
         };
         let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
@@ -1363,5 +1406,54 @@ mod tests {
         // check that next turn is a first turn
         let req = generator.generate_request();
         assert_eq!(req.prompt, "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_normal_distribution() {
+        let samples: Vec<f64> = (0..10_000)
+            .map(|_| sample_num_tokens(750, 100, 10_000, DistributionMode::Normal {variance: 400}) as f64)
+            .collect();
+
+        let mut data = Data::new(samples.clone());
+
+        let min = data.min();
+        let max = data.max();
+        let p50 = data.percentile(50);
+        assert!(min as u64 >= 100);
+        assert!(max as u64 <= 10_000);
+        assert!((p50 - 750.0).abs() < 50.0);
+    }
+
+    #[test]
+    fn test_lognormal_auto_distribution() {
+        let samples: Vec<f64> = (0..10_000)
+            .map(|_| sample_num_tokens(2500, 1, 131_000, DistributionMode::LogNormal {log_mean: 6.62, log_std: 1.4}) as f64)
+            .collect();
+
+        let mut data = Data::new(samples.clone());
+
+        let min = data.min();
+        let max = data.max();
+        let p25 = data.percentile(25);
+        let p50 = data.percentile(50);
+        let p75 = data.percentile(75);
+
+        fn mean(list: &[f64]) -> f64 {
+            let sum: f64 = Iterator::sum(list.iter());
+            f64::from(sum) / (list.len() as f64)
+        }
+        let avg = mean(samples.as_slice());
+
+        // println!("{p25}");
+        // println!("{p50}");
+        // println!("{p75}");
+        // println!("{avg}");
+
+        assert!(min as u64 >= 1);
+        assert!(max as u64 <= 131_000);
+        assert!((p25 - 376.0).abs() / 376.0 < 0.3, "p25 too far off: {}", p25);
+        assert!((p50 - 753.0).abs() / 753.0 < 0.3, "p50 too far off: {}", p50);
+        assert!((p75 - 1719.0).abs() / 1719.0 < 0.3, "p75 too far off: {}", p75);
+        assert!((avg - 2500.0).abs() / 2500.0 < 0.3, "avg too far off: {}", avg);
     }
 }

@@ -1,6 +1,6 @@
 use clap::error::ErrorKind::InvalidValue;
 use clap::{ArgGroup, Error, Parser};
-use inference_benchmarker::{run, RunConfiguration, TokenizeOptions};
+use inference_benchmarker::{run, RunConfiguration, TokenizeOptions, DistributionMode};
 use log::{debug, error};
 use reqwest::Url;
 use std::collections::HashMap;
@@ -55,15 +55,25 @@ struct Args {
     #[clap(short, long, env)]
     no_console: bool,
     /// Constraints for prompt length.
-    /// No value means use the input prompt as defined in input dataset.
-    /// We sample the number of tokens to generate from a normal distribution.
-    /// Specified as a comma-separated list of key=value pairs.
-    /// * num_tokens: target number of prompt tokens
-    /// * min_tokens: minimum number of prompt tokens
-    /// * max_tokens: maximum number of prompt tokens
-    /// * variance: variance in the number of prompt tokens
     ///
-    /// Example: num_tokens=200,max_tokens=210,min_tokens=190,variance=10
+    /// Format: comma-separated key=value pairs.
+    ///
+    /// Keys:
+    /// * `num_tokens` — target number of prompt tokens
+    /// * `min_tokens` — minimum number of prompt tokens
+    /// * `max_tokens` — maximum number of prompt tokens
+    /// * `dist` — distribution specification
+    ///
+    /// The `dist` value defines how token counts are sampled:
+    /// - Normal distribution: `dist=normal:variance=5`
+    /// - Log-normal distribution: `dist=log_normal:log_mean=6.2,log_std=1.3`
+    ///
+    /// Examples:
+    /// ```
+    /// --prompt-options "num_tokens=200,min_tokens=190,max_tokens=210"
+    /// --prompt-options "num_tokens=200,min_tokens=180,max_tokens=220,dist=normal:variance=10"
+    /// --prompt-options "dist=log_normal:log_mean=6.2,log_std=1.3"
+    /// ```
     #[clap(
         long,
         env,
@@ -71,15 +81,27 @@ struct Args {
         group = "group_manual"
     )]
     prompt_options: Option<TokenizeOptions>,
+
     /// Constraints for the generated text.
-    /// We sample the number of tokens to generate from a normal distribution.
-    /// Specified as a comma-separated list of key=value pairs.
-    /// * num_tokens: target number of generated tokens
-    /// * min_tokens: minimum number of generated tokens
-    /// * max_tokens: maximum number of generated tokens
-    /// * variance: variance in the number of generated tokens
     ///
-    /// Example: num_tokens=200,max_tokens=210,min_tokens=190,variance=10
+    /// Format: comma-separated key=value pairs.
+    ///
+    /// Keys:
+    /// * `num_tokens` — target number of generated tokens
+    /// * `min_tokens` — minimum number of generated tokens
+    /// * `max_tokens` — maximum number of generated tokens
+    /// * `dist` — distribution specification
+    ///
+    /// The `dist` value defines how generation lengths are sampled:
+    /// - Normal distribution: `dist=normal:variance=5`
+    /// - Log-normal distribution: `dist=log_normal:log_mean=6.2,log_std=1.3`
+    ///
+    /// Examples:
+    /// ```
+    /// --decode-options "num_tokens=200,min_tokens=190,max_tokens=210"
+    /// --decode-options "num_tokens=200,min_tokens=180,max_tokens=220,dist=normal:variance=10"
+    /// --decode-options "dist=log_normal:log_mean=6.5,log_std=1.1"
+    /// ```
     #[clap(
         long,
         env,
@@ -138,35 +160,112 @@ fn parse_key_val(s: &str) -> Result<HashMap<String, String>, Error> {
 }
 
 fn parse_tokenizer_options(s: &str) -> Result<TokenizeOptions, Error> {
-    let mut tokenizer_options = TokenizeOptions::new();
-    let items = s.split(",").collect::<Vec<&str>>();
-    for item in items.iter() {
-        let key_value = item.split("=").collect::<Vec<&str>>();
-        if key_value.len() != 2 {
+    let mut options = TokenizeOptions::new();
+    let mut dist_spec: Option<&str> = None;
+
+    for item in s.split(',') {
+        let trimmed = item.trim();
+
+        if trimmed.starts_with("dist=") {
+            dist_spec = Some(trimmed);
+            continue;
+        }
+
+        let kv: Vec<&str> = trimmed.split('=').collect();
+        if kv.len() != 2 {
             return Err(Error::new(InvalidValue));
         }
-        match key_value[0] {
+
+        let key = kv[0].trim();
+        let value = kv[1].trim();
+
+        match key {
             "num_tokens" => {
-                tokenizer_options.num_tokens = Some(key_value[1].parse::<u64>().unwrap())
+                options.num_tokens = Some(value.parse::<u64>().map_err(|_| Error::new(InvalidValue))?);
             }
-            "min_tokens" => tokenizer_options.min_tokens = key_value[1].parse::<u64>().unwrap(),
-            "max_tokens" => tokenizer_options.max_tokens = key_value[1].parse::<u64>().unwrap(),
-            "variance" => tokenizer_options.variance = key_value[1].parse::<u64>().unwrap(),
+            "min_tokens" => {
+                options.min_tokens = value.parse::<u64>().map_err(|_| Error::new(InvalidValue))?;
+            }
+            "max_tokens" => {
+                options.max_tokens = value.parse::<u64>().map_err(|_| Error::new(InvalidValue))?;
+            }
             _ => return Err(Error::new(InvalidValue)),
         }
     }
-    if tokenizer_options.num_tokens.is_some()
-        && (tokenizer_options.num_tokens.unwrap() == 0
-            || tokenizer_options.min_tokens == 0
-            || tokenizer_options.max_tokens == 0)
-    {
+
+    options.distribution_mode = if let Some(spec) = dist_spec {
+        parse_distribution_mode(spec)?
+    } else {
+        DistributionMode::Normal { variance: 0 } // default
+    };
+
+    if options.min_tokens > options.max_tokens {
         return Err(Error::new(InvalidValue));
     }
-    if tokenizer_options.min_tokens > tokenizer_options.max_tokens {
-        return Err(Error::new(InvalidValue));
-    }
-    Ok(tokenizer_options)
+
+    Ok(options)
 }
+
+
+fn parse_distribution_mode(spec: &str) -> Result<DistributionMode, Error> {
+    // Examples:
+    // "dist=normal:variance=5"
+    // "dist=log_normal:log_mean=6.2,log_std=1.3"
+    // "dist=normal"
+
+    let parts: Vec<&str> = spec.splitn(2, ':').collect();
+    let dist_name = parts[0]
+        .strip_prefix("dist=")
+        .ok_or_else(|| Error::new(InvalidValue))?
+        .to_lowercase();
+
+    match dist_name.as_str() {
+        "normal" => {
+            if parts.len() == 1 {
+                return Ok(DistributionMode::Normal { variance: 0 });
+            }
+            let mut variance = 0;
+            for kv in parts[1].split(',') {
+                let pair: Vec<&str> = kv.split('=').collect();
+                if pair.len() != 2 || pair[0].trim() != "variance" {
+                    return Err(Error::new(InvalidValue));
+                }
+                variance = pair[1].trim().parse::<u64>().map_err(|_| Error::new(InvalidValue))?;
+            }
+            Ok(DistributionMode::Normal { variance })
+        }
+        "log_normal" => {
+            if parts.len() == 1 {
+                return Err(Error::new(InvalidValue)); // needs params
+            }
+            let mut log_mean = None;
+            let mut log_std = None;
+
+            for kv in parts[1].split(',') {
+                let pair: Vec<&str> = kv.split('=').collect();
+                if pair.len() != 2 {
+                    return Err(Error::new(InvalidValue));
+                }
+                match pair[0].trim() {
+                    "log_mean" => {
+                        log_mean = Some(pair[1].trim().parse::<f64>().map_err(|_| Error::new(InvalidValue))?);
+                    }
+                    "log_std" => {
+                        log_std = Some(pair[1].trim().parse::<f64>().map_err(|_| Error::new(InvalidValue))?);
+                    }
+                    _ => return Err(Error::new(InvalidValue)),
+                }
+            }
+
+            Ok(DistributionMode::LogNormal {
+                log_mean: log_mean.ok_or_else(|| Error::new(InvalidValue))?,
+                log_std: log_std.ok_or_else(|| Error::new(InvalidValue))?,
+            })
+        }
+        _ => Err(Error::new(InvalidValue)),
+    }
+}
+
 
 #[tokio::main]
 async fn main() {
