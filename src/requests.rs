@@ -748,7 +748,7 @@ fn tokenize_prompt(
                 .copied()
                 .collect::<Vec<u32>>();
             let prompt = tokenizer.decode(&tokens, true).unwrap();
-            Ok((prompt, num_tokens))
+            Ok((prompt, num_prompt_tokens))
         }
     }
 }
