@@ -718,29 +718,22 @@ fn tokenize_prompt(
     let prompt_tokens = tokenizer
         .encode(prompt.clone(), false)
         .map_err(|_| anyhow::anyhow!("Error tokenizing prompt"))?;
-    match options.num_tokens {
-        None => {
-            // check if we have a min/max number of tokens, skip prompts that are too short or too long
-            if prompt_tokens.len() > options.max_tokens as usize
-                || prompt_tokens.len() < options.min_tokens as usize
-            {
-                return Err(anyhow::anyhow!(format!(
+    // check if we have a min/max number of tokens, skip prompts that are too short or too long
+    if prompt_tokens.len() > options.max_tokens as usize
+        || prompt_tokens.len() < options.min_tokens as usize
+    {
+        return Err(anyhow::anyhow!(format!(
                     "Prompt is too short or too long, skipping: {}<{}<{}",
                     options.min_tokens,
                     prompt_tokens.len(),
                     options.max_tokens
                 )));
-            }
+    }
+    match options.num_tokens {
+        None => {
             Ok((prompt, prompt_tokens.len() as u64))
         }
         Some(num_tokens) => {
-            if prompt_tokens.len() < num_tokens as usize {
-                return Err(anyhow::anyhow!(format!(
-                    "Prompt is too short to tokenize: {}<{}",
-                    prompt_tokens.len(),
-                    num_tokens
-                )));
-            }
             //apply distribution options
             let num_prompt_tokens = sample_num_tokens(
                 num_tokens,
@@ -1443,11 +1436,13 @@ mod tests {
 
     #[test]
     fn test_lognormal_distribution() {
-        let samples: Vec<f64> = (0..10_000)
+        let mut samples: Vec<f64> = (0..10_000)
             .map(|_| sample_num_tokens(2500, 1, 131_000, DistributionMode::LogNormal {log_mean: 6.62, log_std: 1.4}) as f64)
             .collect();
 
         let mut data = Data::new(samples.clone());
+        samples.dedup();
+        println!("{:?}", samples.len());
 
         let min = data.min();
         let max = data.max();
@@ -1477,11 +1472,14 @@ mod tests {
 
     #[test]
     fn test_gamma_distribution() {
-        let samples: Vec<f64> = (0..10_000)
+        let mut samples: Vec<f64> = (0..10_000)
             .map(|_| sample_num_tokens(170, 1, 131_000, DistributionMode::Gamma {shape: 0.7, scale: 242.857}) as f64)
             .collect();
 
         let mut data = Data::new(samples.clone());
+
+        samples.dedup();
+        println!("{:?}", samples.len());
 
         let min = data.min();
         let max = data.max();
