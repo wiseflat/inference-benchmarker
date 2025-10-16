@@ -38,7 +38,10 @@ def build_df(model: str, data_files: dict[str, str]) -> pd.DataFrame:
 def build_results_df(results_dir) -> pd.DataFrame:
     df = pd.DataFrame()
     # list directories
-    directories = [f'{results_dir}/{d}' for d in os.listdir(results_dir) if os.path.isdir(f'{results_dir}/{d}')] + [results_dir]
+    directories = [results_dir]
+    for root, dirs, _ in os.walk(results_dir):
+        for d in dirs:
+            directories.append(os.path.join(root, d))
     for directory in directories:
         # list json files in results directory
         data_files = {}
