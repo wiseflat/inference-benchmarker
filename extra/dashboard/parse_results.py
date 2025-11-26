@@ -15,14 +15,10 @@ def build_df(model: str, data_files: dict[str, str]) -> pd.DataFrame:
                 data['config']['meta'] = {}
             for result in data['results']:
                 entry = pd.json_normalize(result).to_dict(orient='records')[0]
-                if 'engine' in data['config']['meta']:
-                    entry['engine'] = data['config']['meta']['engine']
-                if 'tp' in data['config']['meta']:
-                    entry['tp'] = data['config']['meta']['tp']
-                if 'version' in data['config']['meta']:
-                    entry['version'] = data['config']['meta']['version']
-                if 'device' in data['config']['meta']:
-                    entry['device'] = data['config']['meta']['device']
+                entry['engine'] = data['config']['meta'].get('engine', '-')
+                entry['tp'] = data['config']['meta'].get('tp', 1)
+                entry['version'] = data['config']['meta'].get('version', '-')
+                entry['device'] = data['config']['meta'].get('device', '-')
                 entry['model'] = data['config']['model_name']
                 entry['run_id'] = data['config']['run_id']
                 df_tmp = pd.DataFrame(entry, index=[0])
