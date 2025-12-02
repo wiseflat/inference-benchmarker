@@ -283,7 +283,8 @@ impl Benchmark {
     }
 
     pub async fn run_throughput(&mut self) -> anyhow::Result<()> {
-        self.run_throughput_at(self.config.max_vus)?
+        self.run_throughput_at(self.config.max_vus).await?;
+        Ok(())
     }
 
     pub async fn run_throughput_at(&mut self, max_vus: u64) -> anyhow::Result<()> {
@@ -341,7 +342,8 @@ impl Benchmark {
     }
 
     pub async fn run_perf(&mut self) -> anyhow::Result<()> {
-        for i in std::iter::successors(Some(1u64), |&n| n.checked_mul(2).filter(|&x| x <= self.config.max_vus)) {
+        let max_vus = self.config.max_vus.clone();
+        for i in std::iter::successors(Some(1u64), |&n| n.checked_mul(2).filter(|&x| x <= max_vus)) {
             self.run_throughput_at(i).await?;
         }
         Ok(())
