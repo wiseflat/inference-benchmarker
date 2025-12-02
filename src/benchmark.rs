@@ -283,9 +283,13 @@ impl Benchmark {
     }
 
     pub async fn run_throughput(&mut self) -> anyhow::Result<()> {
-        info!("Running throughput benchmark");
+        self.run_throughput_at(self.config.max_vus)?
+    }
 
-        let id = "throughput".to_string();
+    pub async fn run_throughput_at(&mut self, max_vus: u64) -> anyhow::Result<()> {
+        info!("Running throughput benchmark with max VUs: {}", max_vus);
+
+        let id = format!("throughput@{}VU", max_vus);
 
         // notify start event
         self.event_bus.send(Event::BenchmarkStart(BenchmarkEvent {
@@ -307,7 +311,7 @@ impl Benchmark {
             self.backend.clone(),
             ExecutorType::ConstantVUs,
             executors::ExecutorConfig {
-                max_vus: self.config.max_vus,
+                max_vus,
                 duration: self.config.duration,
                 rate: None,
             },
@@ -337,64 +341,9 @@ impl Benchmark {
     }
 
     pub async fn run_perf(&mut self) -> anyhow::Result<()> {
-        info!("Running performance benchmark");
-
-        let id = "performance".to_string();
-
-        // notify start event
-        self.event_bus.send(Event::BenchmarkStart(BenchmarkEvent {
-            id: id.clone(),
-            scheduler_type: ExecutorType::ConstantVUs,
-            request_throughput: None,
-            progress: 0.0,
-            results: None,
-            successful_requests: 0,
-            failed_requests: 0,
-        }))?;
-
-        // create progress handler
-        let tx = self.handle_progress(id.clone()).await;
-
-        let mut successful_requests = 0u64;
-        let mut failed_requests = 0u64;
-
-
         for i in std::iter::successors(Some(1u64), |&n| n.checked_mul(2).filter(|&x| x <= self.config.max_vus)) {
-            // start scheduler
-            let mut scheduler = scheduler::Scheduler::new(
-                id.clone(),
-                self.backend.clone(),
-                ExecutorType::ConstantVUs,
-                executors::ExecutorConfig {
-                    max_vus: i,
-                    duration: self.config.duration,
-                    rate: None,
-                },
-                self.requests.clone(),
-                tx.clone(),
-                self.stop_sender.clone(),
-            );
-            scheduler.run().await?;
-            let results = scheduler.get_results().lock().await.clone();
-            info!("Result {results:?}");
-            self.report.add_benchmark_result(results.clone());
-            successful_requests += results.successful_requests() as u64;
-            failed_requests += results.failed_requests() as u64;
+            self.run_throughput_at(i)?
         }
-
-        // send None to close the progress handler
-        tx.send(None).await.unwrap();
-
-        // notify end event
-        self.event_bus.send(Event::BenchmarkEnd(BenchmarkEvent {
-            id: id.clone(),
-            scheduler_type: ExecutorType::ConstantVUs,
-            request_throughput: Some(0.0),
-            progress: 100.0,
-            results: None,
-            successful_requests,
-            failed_requests,
-        }))?;
         Ok(())
     }
 
