@@ -15,7 +15,7 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time;
-use tokenizers::{FromPretrainedParameters, Tokenizer};
+use tokenizers::Tokenizer;
 use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, Instant};
 use uuid::Uuid;
@@ -320,6 +320,12 @@ pub struct ConversationEntry {
     pub conversations: Vec<Conversation>,
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub enum TokenizerSource {
+    Hub,
+    Local
+}
+
 #[derive(Clone, Serialize, Debug, PartialEq)]
 pub struct TokenizeOptions {
     pub num_tokens: Option<u64>,
@@ -428,22 +434,10 @@ impl ConversationTextRequestGenerator {
     /// so that each `TextGenerationRequest` has a reference to the next turn in the conversation.
     pub fn load(
         filepath: PathBuf,
-        tokenizer: String,
+        tokenizer: Arc<Tokenizer>,
         prompt_tokenize_opts: Option<TokenizeOptions>,
         decode_tokenize_opts: Option<TokenizeOptions>,
-        hf_token: Option<String>,
     ) -> anyhow::Result<Self> {
-        let params = FromPretrainedParameters {
-            token: hf_token,
-            ..Default::default()
-        };
-        let tokenizer = match Tokenizer::from_pretrained(tokenizer, Some(params)) {
-            Ok(tokenizer) => tokenizer,
-            Err(e) => {
-                return Err(anyhow::anyhow!("Error loading tokenizer: {e}"));
-            }
-        };
-        let tokenizer = Arc::new(tokenizer);
         // load json file
         let input = std::fs::read_to_string(&filepath)?;
         let data: Vec<ConversationEntry> = serde_json::from_str(&input).expect("Unable to parse input file. Check that it is valid JSON and matches the expected format.");
@@ -1200,16 +1194,14 @@ mod tests {
     #[tokio::test]
     async fn test_load_conversations_from_file() {
         let filepath = PathBuf::from("test_data/conversations.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions::default();
         let decode_tokenize_opts = TokenizeOptions::default();
-        let hf_token = None;
         let generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         assert_eq!(generator.requests.len(), 17016);
@@ -1219,7 +1211,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_conversations_bounded() {
         let filepath = PathBuf::from("test_data/conversations.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions {
             num_tokens: None,
             min_tokens: 4,
@@ -1229,13 +1221,11 @@ mod tests {
             }
         };
         let decode_tokenize_opts = TokenizeOptions::default();
-        let hf_token = None;
         let generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         let min_tokens = generator
@@ -1258,7 +1248,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_conversations_fixed_tokens() {
         let filepath = PathBuf::from("test_data/conversations.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions {
             num_tokens: Some(200),
             min_tokens: 200,
@@ -1268,13 +1258,11 @@ mod tests {
             }
         };
         let decode_tokenize_opts = TokenizeOptions::default();
-        let hf_token = None;
         let generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         for r in generator.requests.iter() {
@@ -1287,7 +1275,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_conversations_multi_turn() {
         let filepath = PathBuf::from("test_data/chat.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions {
             num_tokens: None,
             min_tokens: 1,
@@ -1296,14 +1284,12 @@ mod tests {
                 variance: 0
             }
         };
-        let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
         let generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         let turns = generator
@@ -1343,7 +1329,7 @@ mod tests {
     #[tokio::test]
     async fn test_conversation_queue() {
         let filepath = PathBuf::from("test_data/chat.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions {
             num_tokens: None,
             min_tokens: 1,
@@ -1352,14 +1338,12 @@ mod tests {
                 variance: 0
             }
         };
-        let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
         let mut generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         for i in 0..20 {
@@ -1379,7 +1363,7 @@ mod tests {
     #[tokio::test]
     async fn test_conversation_turns_queue() {
         let filepath = PathBuf::from("test_data/chat.json");
-        let tokenizer = "gpt2".to_string();
+        let tokenizer = Arc::new(Tokenizer::from_pretrained("gpt2", None).unwrap());
         let prompt_tokenize_opts = TokenizeOptions {
             num_tokens: None,
             min_tokens: 1,
@@ -1388,14 +1372,12 @@ mod tests {
                 variance: 0
             }
         };
-        let hf_token = None;
         let decode_tokenize_opts = TokenizeOptions::default();
         let mut generator = ConversationTextRequestGenerator::load(
             filepath,
             tokenizer,
             Some(prompt_tokenize_opts),
             Some(decode_tokenize_opts),
-            hf_token,
         )
         .unwrap();
         // generate the first user turn

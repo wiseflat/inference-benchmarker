@@ -1,6 +1,6 @@
 use clap::error::ErrorKind::InvalidValue;
 use clap::{ArgGroup, Error, Parser};
-use inference_benchmarker::{run, RunConfiguration, TokenizeOptions, DistributionMode, BenchmarkKind};
+use inference_benchmarker::{run, RunConfiguration, TokenizeOptions, DistributionMode, BenchmarkKind, TokenizerSource};
 use log::{debug, error};
 use reqwest::Url;
 use std::collections::HashMap;
@@ -14,6 +14,10 @@ struct Args {
     /// The name of the tokenizer to use
     #[clap(short, long, env)]
     tokenizer_name: String,
+
+    /// The source of the tokenizer to use (hub or local)
+    #[clap(default_value = "hub", short, long, env, value_parser = parse_tokenizer_source)]
+    tokenizer_source: TokenizerSource,
 
     /// The name of the model to use. If not provided, the same name as the tokenizer will be used.
     #[clap(long, env)]
@@ -291,6 +295,14 @@ fn parse_distribution_mode(spec: &str) -> Result<DistributionMode, Error> {
     }
 }
 
+fn parse_tokenizer_source(s: &str) -> Result<TokenizerSource, Error> {
+    match s.to_lowercase().as_str() {
+        "hub" => Ok(TokenizerSource::Hub),
+        "local" => Ok(TokenizerSource::Local),
+        _ => Err(Error::new(InvalidValue)),
+    }
+}
+
 
 #[tokio::main]
 async fn main() {
@@ -335,6 +347,7 @@ async fn main() {
         api_key: args.api_key,
         profile: args.profile.clone(),
         tokenizer_name: args.tokenizer_name.clone(),
+        tokenizer_source: args.tokenizer_source.clone(),
         max_vus: args.max_vus,
         duration: args.duration,
         rates: args.rates,
@@ -377,4 +390,19 @@ fn test_parse_tokenizer_options() {
     let result = parse_tokenizer_options("num_tokens=2500,min_tokens=1,max_tokens=131000,dist=log_normal:log_mean=6.62,log_std=1.4");
     assert!(result.is_ok());
     assert_eq!(expected, result.unwrap());
+}
+
+#[test]
+fn test_parse_tokenizer_source() {
+    let result = parse_tokenizer_source("Hub");
+    assert!(result.is_ok());
+    assert_eq!(TokenizerSource::Hub, result.unwrap());
+    let result = parse_tokenizer_source("hub");
+    assert!(result.is_ok());
+    assert_eq!(TokenizerSource::Hub, result.unwrap());
+    let result = parse_tokenizer_source("local");
+    assert!(result.is_ok());
+    assert_eq!(TokenizerSource::Local, result.unwrap());
+    let result = parse_tokenizer_source("random");
+    assert!(result.is_err());
 }

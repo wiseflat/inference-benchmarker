@@ -11,6 +11,7 @@ use crate::benchmark::{Event, MessageEvent};
 pub use crate::profiles::apply_profile;
 use crate::requests::OpenAITextGenerationBackend;
 pub use crate::requests::TokenizeOptions;
+pub use crate::requests::TokenizerSource;
 pub use crate::requests::DistributionMode;
 use chrono::Local;
 use crossterm::ExecutableCommand;
@@ -37,6 +38,7 @@ pub struct RunConfiguration {
     pub url: Url,
     pub api_key: String,
     pub tokenizer_name: String,
+    pub tokenizer_source: TokenizerSource,
     pub profile: Option<String>,
     pub max_vus: u64,
     pub duration: std::time::Duration,
@@ -79,10 +81,22 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
         ..Default::default()
     };
     let tokenizer =
-        match Tokenizer::from_pretrained(run_config.tokenizer_name.clone(), Some(params)) {
-            Ok(tokenizer) => tokenizer,
-            Err(e) => {
-                return Err(anyhow::anyhow!("Error loading tokenizer: {e}"));
+        match run_config.tokenizer_source {
+            TokenizerSource::Local => {
+                match Tokenizer::from_file(run_config.tokenizer_name.clone()) {
+                    Ok(tokenizer) => tokenizer,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Error loading tokenizer from file: {e}"));
+                    }
+                }
+            },
+            TokenizerSource::Hub => {
+                match Tokenizer::from_pretrained(run_config.tokenizer_name.clone(), Some(params)) {
+                    Ok(tokenizer) => tokenizer,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Error loading tokenizer from hub: {e}"));
+                    }
+                }
             }
         };
     let tokenizer = Arc::new(tokenizer);
@@ -90,7 +104,7 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
         run_config.api_key,
         run_config.url,
         run_config.model_name.clone(),
-        tokenizer,
+        tokenizer.clone(),
         run_config.duration,
     )?;
 
@@ -166,10 +180,9 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
     .expect("Can't download dataset");
     let requests = requests::ConversationTextRequestGenerator::load(
         filepath,
-        run_config.tokenizer_name.clone(),
+        tokenizer,
         run_config.prompt_options,
         run_config.decode_options,
-        run_config.hf_token,
     )?;
 
     let mut benchmark = benchmark::Benchmark::new(
